@@ -1,0 +1,24 @@
+# etcd snapshots and backup files
+*.db
+*.db.part
+*.snap
+/backups/
+
+# Kubernetes credentials and private keys
+kubeconfig
+kubeconfig.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.kubeconfig
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store

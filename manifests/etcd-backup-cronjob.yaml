@@ -1,0 +1,113 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup
+  namespace: default
+spec:
+  schedule: "0 0 * * *"
+  timeZone: "Asia/Tehran"
+  suspend: true
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          nodeSelector:
+            kubernetes.io/hostname: kuber-vmware-virtual-platform
+          tolerations:
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
+          restartPolicy: Never
+          initContainers:
+            - name: clean-stale-temp
+              image: 192.168.198.140:8443/nginx:1.28-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - rm -f /backup/etcd-snapshot-pending.db
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+
+            - name: create-snapshot
+              image: registry.k8s.io/etcd:3.7.0-0
+              imagePullPolicy: IfNotPresent
+              command: ["etcdctl"]
+              args:
+                - "--endpoints=https://127.0.0.1:2379"
+                - "--cacert=/certs/ca.crt"
+                - "--cert=/certs/client.crt"
+                - "--key=/certs/client.key"
+                - "snapshot"
+                - "save"
+                - "/backup/etcd-snapshot-pending.db"
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                - name: etcd-ca
+                  mountPath: /certs/ca.crt
+                  readOnly: true
+                - name: client-cert
+                  mountPath: /certs/client.crt
+                  readOnly: true
+                - name: client-key
+                  mountPath: /certs/client.key
+                  readOnly: true
+
+          containers:
+            - name: finalize-and-retain
+              image: 192.168.198.140:8443/nginx:1.28-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  stamp="$(date -u +%Y%m%d-%H%M%S)"
+                  final="/backup/etcd-snapshot-${stamp}.db"
+
+                  mv /backup/etcd-snapshot-pending.db "$final"
+                  chmod 600 "$final"
+
+                  echo "Snapshot finalized: $final"
+                  echo "Snapshot size:"
+                  ls -lh "$final"
+
+                  echo "Applying seven-backup retention policy..."
+                  ls -1t /backup/etcd-snapshot-*.db |
+                    tail -n +8 |
+                    while IFS= read -r old; do
+                      [ -n "$old" ] && rm -f "$old"
+                    done
+
+                  echo "Automated backups remaining:"
+                  ls -lh /backup/etcd-snapshot-*.db
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+
+          volumes:
+            - name: backup
+              hostPath:
+                path: /var/backups/etcd
+                type: Directory
+            - name: etcd-ca
+              hostPath:
+                path: /etc/kubernetes/pki/etcd/ca.crt
+                type: File
+            - name: client-cert
+              hostPath:
+                path: /etc/kubernetes/pki/apiserver-etcd-client.crt
+                type: File
+            - name: client-key
+              hostPath:
+                path: /etc/kubernetes/pki/apiserver-etcd-client.key
+                type: File
