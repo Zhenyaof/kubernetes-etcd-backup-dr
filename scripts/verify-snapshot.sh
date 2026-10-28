@@ -8,7 +8,7 @@ fi
 
 SNAPSHOT="$1"
 
-if [[ ! -f "$SNAPSHOT" ]]; then
+if ! sudo test -f "$SNAPSHOT"; then
   echo "ERROR: Snapshot file not found: $SNAPSHOT"
   exit 1
 fi
