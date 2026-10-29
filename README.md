@@ -419,33 +419,31 @@ The standalone verification-script fix was committed in:
 
 `5060831 Fix standalone snapshot verification output`
 
-## Screenshots
 
-The following screenshots document the configuration and verification results.
+## Evidence and Screenshots
 
-### 1. CronJob configuration and safety state
+The following screenshots document the backup configuration, successful execution, snapshot validation, file integrity, and standalone restore verification.
 
-![CronJob configuration and suspended state](screenshots/01-cronjob-safety.png)
+### 1. CronJob Configuration and Safety
 
-### 2. Successful manual backup Job
+![CronJob configuration and safety](screenshots/CronJob%20configuration%20and%20safety.PNG)
 
-![Successful manual backup Job](screenshots/02-backup-job-success.png)
+### 2. Successful Backup Job
 
-### 3. Snapshot validation output
+![Successful backup Job](screenshots/Successful%20backup%20Job.PNG)
 
-![Snapshot validation output](screenshots/03-snapshot-validation.png)
+### 3. Snapshot Validation
 
-### 4. Backup file integrity and permissions
+![Snapshot validation](screenshots/Snapshot%20validation.PNG)
 
-![Backup file permissions and SHA-256 checksum](screenshots/04-backup-integrity.png)
+### 4. Backup File, Permissions, and Checksum
 
-### 5. Standalone snapshot verification
+![Backup file, permissions, and checksum](screenshots/Backup%20file%2C%20permissions%2C%20and%20checksum.PNG)
 
-![Standalone snapshot verification](screenshots/05-standalone-verification.png)
+### 5. Standalone Verification
 
-For capture instructions, see [`docs/SCREENSHOT-GUIDE.md`](docs/SCREENSHOT-GUIDE.md).
+![Standalone verification](screenshots/Standalone%20verification.PNG)
 
-Screenshots should show actual terminal or Kubernetes output. Credentials, tokens, private keys, and other sensitive information must be redacted before publication.
 
 ## Safety Considerations
 
