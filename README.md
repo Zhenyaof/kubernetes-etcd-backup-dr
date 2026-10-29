@@ -1,57 +1,84 @@
+
 # Kubernetes etcd Backup and Disaster Recovery
 
-A Kubernetes project for automated etcd snapshot backups, snapshot validation, secure backup storage, retention management, and disaster recovery verification.
+A Kubernetes infrastructure project demonstrating automated etcd snapshot backups, snapshot validation, secure backup storage, retention management, and disaster recovery verification.
 
-This project demonstrates how to create and validate etcd snapshots without modifying the live etcd data directory or performing a live-cluster restore.
+The project focuses on creating and validating etcd snapshots without modifying the live etcd data directory or performing a live-cluster restore.
+
+## At a Glance
+
+- **Platform:** Ubuntu 24.04, Kubernetes v1.37.0, etcd 3.7.0
+- **Backup mechanism:** TLS-authenticated etcd snapshots
+- **Validation:** `etcdutl snapshot status`
+- **Retention:** Up to seven newest automated backups
+- **Integrity:** SHA-256 checksum verification
+- **Permissions:** Restrictive `600` permissions for finalized backups
+- **Recovery testing:** Isolated etcd snapshot restore
+- **Operational safety:** Scheduled CronJob remains suspended
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [Architecture and Workflow](#architecture-and-workflow)
+- [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [Environment](#environment)
 - [Backup Workflow](#backup-workflow)
 - [Validation Results](#validation-results)
-- [Backup Security and Retention](#backup-security-and-retention)
+- [Security and Retention](#security-and-retention)
 - [Disaster Recovery Testing](#disaster-recovery-testing)
 - [Cluster Health Checks](#cluster-health-checks)
 - [Usage](#usage)
+- [Screenshots](#screenshots)
 - [Safety Considerations](#safety-considerations)
 - [Future Improvements](#future-improvements)
-- [Evidence and Screenshots](#evidence-and-screenshots)
+- [Project Status](#project-status)
 
 ## Overview
 
-etcd stores Kubernetes cluster state, including information about resources and cluster configuration. Losing this data can prevent a Kubernetes control plane from recovering correctly.
+etcd is the distributed key-value store used by Kubernetes to maintain cluster state, resource definitions, and configuration. Losing this data can prevent a Kubernetes control plane from recovering correctly.
 
-This project implements a backup workflow that:
+This project implements a staged backup workflow that:
 
-1. Creates an etcd snapshot using authenticated TLS.
-2. Validates the snapshot using `etcdutl`.
-3. Finalizes the snapshot with a timestamped filename.
-4. Applies restrictive file permissions.
-5. Retains the seven newest automated backups.
-6. Provides a standalone script for verifying saved snapshots.
-7. Provides a cluster health-check script.
-8. Supports isolated disaster recovery testing.
+- Creates snapshots using authenticated TLS.
+- Validates snapshots before finalization.
+- Uses timestamped filenames for automated backups.
+- Applies restrictive file permissions.
+- Retains the seven newest automated snapshots.
+- Verifies saved snapshots through a standalone script.
+- Performs basic Kubernetes cluster health checks.
+- Supports isolated disaster recovery testing.
 
-The project was tested on a running Kubernetes environment using a manually triggered Job created from the backup CronJob.
+Testing was performed on a running Kubernetes environment using a manually triggered Job created from the backup CronJob.
 
-**Important:** The scheduled CronJob remains suspended. Manual execution was used to test the backup workflow without enabling recurring scheduled execution.
+**Safety note:** The scheduled CronJob remains suspended. The backup workflow was tested manually rather than by enabling recurring scheduled execution.
 
-## Architecture and Workflow
+## Architecture
 
-The backup process is implemented as a Kubernetes CronJob with multiple stages.
+The backup process separates snapshot creation, validation, and finalization so that an incomplete or invalid snapshot is not treated as a completed backup.
 
-1. **Temporary-file preparation:** Checks for and handles stale temporary snapshot files.
-2. **Snapshot creation:** Connects to the local etcd endpoint using TLS credentials and creates a snapshot.
-3. **Snapshot validation:** Uses `etcdutl snapshot status` to validate the snapshot and display its metadata.
-4. **Finalization:** Renames the validated snapshot to a timestamped filename and applies restrictive file permissions.
-5. **Retention:** Keeps the seven newest automated snapshots and removes older automated backups.
+```mermaid
+flowchart TD
+    A["Suspended Kubernetes CronJob"] --> B["Manual Job trigger"]
+    B --> C["Prepare temporary backup file"]
+    C --> D["Create etcd snapshot using TLS"]
+    D --> E["Validate with etcdutl"]
+    E -->|Valid| F["Finalize timestamped snapshot"]
+    E -->|Invalid| G["Stop before finalization"]
+    F --> H["Apply permissions 600"]
+    H --> I["Retain up to seven automated backups"]
+    F --> J["Standalone verification Pod"]
+    J --> K["Inspect snapshot metadata and checksum"]
+```
 
-The workflow uses a temporary filename before finalization so that an incomplete snapshot is not treated as a completed backup.
+### Workflow stages
 
-The standalone verification script provides an additional check by running `etcdutl` in a temporary Kubernetes Pod with the backup directory mounted read-only.
+1. **Preparation:** Handles stale temporary snapshot files.
+2. **Snapshot creation:** Connects to the local etcd endpoint using TLS credentials.
+3. **Validation:** Reads snapshot metadata using `etcdutl snapshot status`.
+4. **Finalization:** Renames the validated snapshot to a timestamped filename.
+5. **Security:** Applies restrictive file permissions.
+6. **Retention:** Keeps up to seven newest automated snapshots.
+7. **Verification:** Uses a temporary Kubernetes Pod to inspect a saved snapshot with the backup directory mounted read-only.
 
 ## Project Structure
 
@@ -64,14 +91,19 @@ kubernetes-etcd-backup-dr/
 │   └── verify-snapshot.sh
 ├── docs/
 │   └── SCREENSHOT-GUIDE.md
+├── screenshots/
+│   ├── 01-cronjob-safety.png
+│   ├── 02-backup-job-success.png
+│   ├── 03-snapshot-validation.png
+│   ├── 04-backup-integrity.png
+│   └── 05-standalone-verification.png
+├── .gitignore
 └── README.md
 ```
 
 ## Environment
 
-The project was tested in the following environment.
-
-| Component | Version or Configuration |
+| Component | Version or configuration |
 |---|---|
 | Operating system | Ubuntu 24.04 |
 | Kubernetes | v1.37.0 |
@@ -89,7 +121,7 @@ The CronJob manifest is located at:
 
 `manifests/etcd-backup-cronjob.yaml`
 
-Its schedule is configured as follows:
+Its relevant configuration is:
 
 ```yaml
 schedule: "0 0 * * *"
@@ -101,7 +133,7 @@ The schedule represents midnight every day in the configured timezone. Because `
 
 ### Manual execution
 
-A manual Job was created from the CronJob template to test the workflow:
+A manual Job was created from the CronJob template:
 
 ```bash
 kubectl create job etcd-backup-final-test \
@@ -113,19 +145,19 @@ kubectl get job etcd-backup-final-test -w
 The observed execution completed successfully:
 
 ```text
-NAME                     STATUS              COMPLETIONS   DURATION   AGE
-etcd-backup-final-test   Running             0/1           5s         5s
-etcd-backup-final-test   SuccessCriteriaMet  0/1           6s         6s
-etcd-backup-final-test   Complete            1/1           6s         6s
+NAME                    STATUS              COMPLETIONS   DURATION   AGE
+etcd-backup-final-test  Running             0/1           5s         5s
+etcd-backup-final-test  SuccessCriteriaMet  0/1           6s         6s
+etcd-backup-final-test  Complete            1/1           6s         6s
 ```
 
-The completed Job confirms that Kubernetes successfully executed the Job. Snapshot validation and file checks provide additional evidence that the resulting backup is usable.
+The completed Job demonstrates successful Job execution. Snapshot validation and file checks provide additional evidence of snapshot readability and integrity.
 
 ## Validation Results
 
 ### 1. Snapshot creation
 
-The snapshot creation container reported the following output. JSON log lines have been abbreviated to the relevant fields for readability.
+The snapshot creation container reported:
 
 ```text
 {"level":"info","msg":"created temporary db file","path":"/backup/etcd-snapshot-pending.db.part"}
@@ -167,13 +199,9 @@ Automated backups remaining:
 -rw------- 1 root root 2.6M Oct 29 07:00 /backup/etcd-snapshot-20261029-070003.db
 ```
 
-The finalized snapshot was stored on the host at:
+The finalized host backup was:
 
-```text
-/var/backups/etcd/etcd-snapshot-20261029-070003.db
-```
-
-Its observed properties were:
+`/var/backups/etcd/etcd-snapshot-20261029-070003.db`
 
 | Property | Result |
 |---|---|
@@ -185,13 +213,13 @@ Its observed properties were:
 | Snapshot revision | 73556 |
 | Total keys | 405 |
 
-Permission mode `600` means that only the file owner can read or write the file.
+Permission mode `600` means only the file owner can read or write the file.
 
 ### 4. Standalone snapshot verification
 
-The verification script is located at:
+The verification script is:
 
-` scripts/verify-snapshot.sh `
+`scripts/verify-snapshot.sh`
 
 Run it with:
 
@@ -200,17 +228,9 @@ Run it with:
   /var/backups/etcd/etcd-snapshot-20261029-070003.db
 ```
 
-The script:
+The script checks that the file exists, displays its details, calculates the SHA-256 checksum, creates a temporary verification Pod, waits for verification to complete, displays snapshot metadata, and cleans up the temporary Pod through its cleanup handler.
 
-1. Checks that the snapshot file exists.
-2. Displays the file details.
-3. Calculates and displays the SHA-256 checksum.
-4. Creates a temporary verification Pod.
-5. Waits for the verification Pod to complete successfully.
-6. Displays the `etcdutl snapshot status` output.
-7. Deletes the temporary Pod through its cleanup handler.
-
-Actual verification output:
+Observed output:
 
 ```text
 === Snapshot File ===
@@ -235,11 +255,11 @@ pod/etcd-snapshot-check-1793257924-9175 condition met
 SUCCESS: Snapshot status command completed.
 ```
 
-The matching snapshot metadata and checksum provide evidence that the expected file was inspected and its contents could be read by the verification tool.
+The matching snapshot metadata and checksum provide evidence that the expected file was inspected and could be read by the verification tool.
 
 ### 5. Previous snapshot validation
 
-An earlier automated snapshot was also inspected.
+An earlier automated snapshot was inspected.
 
 | Property | Result |
 |---|---|
@@ -256,7 +276,6 @@ A separately named manual test snapshot was also validated.
 | Property | Result |
 |---|---|
 | File | `manual-test-20261026-1635.db` |
-| Size | 2,773,024 bytes |
 | SHA-256 | `e0867f7816c4297da83afc797c626e51f422d07a36a7dda2def03c299e03005a` |
 | Snapshot hash | `ef7515a5` |
 | Revision | 33443 |
@@ -265,42 +284,45 @@ A separately named manual test snapshot was also validated.
 
 These snapshots were captured at different times, so their revisions, hashes, and key counts are not expected to match.
 
-## Backup Security and Retention
+## Security and Retention
 
-The workflow includes the following controls:
+The workflow includes these controls:
 
-- Uses TLS credentials to connect to the etcd endpoint.
-- Validates the snapshot before finalizing it.
-- Uses timestamped filenames for automated snapshots.
-- Applies `600` permissions to finalized backup files.
-- Retains the seven newest automated backups.
-- Keeps manually named test snapshots outside the automated retention filename pattern.
-- Uses a separate verification Pod with the backup directory mounted read-only.
-- Disables automatic service-account token mounting in the verification Pod.
+- TLS-authenticated connections to etcd.
+- Snapshot validation before finalization.
+- Timestamped automated backup filenames.
+- Restrictive `600` permissions for finalized snapshots.
+- Retention of up to seven newest automated backups.
+- Exclusion of manually named test snapshots from the automated retention filename pattern.
+- A separate verification Pod with a read-only backup mount.
+- Disabled automatic service-account token mounting in the verification Pod.
 
-The retention logic was tested with dummy backup files. The test confirmed that only the seven newest automated snapshots were retained and that a manually named test snapshot was not removed by the automated retention policy.
+The retention logic was tested using dummy backup files. The test confirmed that only the seven newest automated snapshots were retained and that a manually named test snapshot was not removed by the automated retention policy.
 
-During the end-to-end Job test, two automated snapshots existed, and both remained after the retention step. Seven is the maximum number of automated backups retained, not a requirement to maintain seven files when fewer backups exist.
+During the end-to-end Job test, two automated snapshots existed and both remained after retention. Seven is the maximum number of automated backups retained, not a requirement to maintain seven files when fewer backups exist.
 
 ## Disaster Recovery Testing
 
-A previous snapshot was tested in an isolated etcd restore environment.
+A previous snapshot was restored in an isolated etcd environment.
 
-The isolated test demonstrated that the snapshot could be restored and that the recovered etcd instance elected a leader and reported internal gRPC health as `SERVING`.
+The test demonstrated that the snapshot could be restored, the recovered etcd instance elected a leader, and its internal gRPC health reported `SERVING`.
 
-This provides evidence that the snapshot contains recoverable etcd data. It does not, by itself, prove that a complete Kubernetes control plane can be restored successfully in production.
+This is evidence that the snapshot contains recoverable etcd data. It does not prove that a complete Kubernetes control plane can be restored successfully in production.
 
-The restore test was isolated from the live etcd data directory.
+The restore test was isolated from the live etcd data directory. No restore was performed over the live cluster's etcd data.
 
-**No restore was performed over the live cluster's etcd data.**
+A complete disaster-recovery exercise should additionally validate:
 
-A complete disaster-recovery exercise should additionally validate the restored control plane, API readiness, required cluster resources, and application behavior in an isolated environment.
+- Restored control-plane functionality.
+- Kubernetes API readiness.
+- Required cluster resources.
+- Application behavior in the isolated environment.
 
 ## Cluster Health Checks
 
-The cluster health-check script is located at:
+The health-check script is:
 
-` scripts/check-cluster-health.sh `
+`scripts/check-cluster-health.sh`
 
 Run it with:
 
@@ -308,12 +330,7 @@ Run it with:
 ./scripts/check-cluster-health.sh
 ```
 
-The script checks:
-
-- Kubernetes node readiness.
-- Kubernetes API readiness.
-- Backup CronJob status.
-- Locally available `.db` backup files.
+The script checks Kubernetes node readiness, API readiness, backup CronJob status, and locally available `.db` backup files.
 
 During testing, the Kubernetes nodes were `Ready`, and the API readiness endpoint returned:
 
@@ -336,14 +353,14 @@ kubectl get cronjob etcd-backup -o yaml
 kubectl get cronjob etcd-backup
 ```
 
-### Check the CronJob suspension state
+### Check the suspension state
 
 ```bash
 kubectl get cronjob etcd-backup \
   -o jsonpath='{.spec.suspend}{"\n"}'
 ```
 
-Expected output in the current safety configuration:
+Expected output:
 
 ```text
 true
@@ -367,13 +384,7 @@ A Job created from a CronJob inherits its template, but its execution is indepen
 ```bash
 kubectl describe job etcd-backup-final-test
 kubectl get pods
-```
-
-To find the Pod belonging to the Job:
-
-```bash
-kubectl get pods \
-  -l job-name=etcd-backup-final-test
+kubectl get pods -l job-name=etcd-backup-final-test
 ```
 
 ### Inspect backup files
@@ -397,18 +408,44 @@ Replace the example filename with the actual snapshot you want to verify.
 ./scripts/check-cluster-health.sh
 ```
 
-### Validate the repository state
+### Validate repository state
 
 ```bash
 git status -sb
 git log -1 --oneline
 ```
 
-The verification-script fix was committed and pushed in:
+The standalone verification-script fix was committed in:
 
-```text
-5060831 Fix standalone snapshot verification output
-```
+`5060831 Fix standalone snapshot verification output`
+
+## Screenshots
+
+The following screenshots document the configuration and verification results.
+
+### 1. CronJob configuration and safety state
+
+![CronJob configuration and suspended state](screenshots/01-cronjob-safety.png)
+
+### 2. Successful manual backup Job
+
+![Successful manual backup Job](screenshots/02-backup-job-success.png)
+
+### 3. Snapshot validation output
+
+![Snapshot validation output](screenshots/03-snapshot-validation.png)
+
+### 4. Backup file integrity and permissions
+
+![Backup file permissions and SHA-256 checksum](screenshots/04-backup-integrity.png)
+
+### 5. Standalone snapshot verification
+
+![Standalone snapshot verification](screenshots/05-standalone-verification.png)
+
+For capture instructions, see [`docs/SCREENSHOT-GUIDE.md`](docs/SCREENSHOT-GUIDE.md).
+
+Screenshots should show actual terminal or Kubernetes output. Credentials, tokens, private keys, and other sensitive information must be redacted before publication.
 
 ## Safety Considerations
 
@@ -420,54 +457,34 @@ This project is designed to test backup creation and verification without riskin
 - Do not restore a snapshot over the live etcd data directory as a routine verification step.
 - Protect backup files because etcd snapshots can contain sensitive Kubernetes state.
 - Ensure the backup directory has sufficient disk space.
-- Store a copy of important backups outside the cluster or host to protect against host failure.
+- Store important backups outside the cluster or host to protect against host failure.
 - Periodically test recovery in an isolated environment.
-- Treat a successful snapshot-status command as evidence of snapshot readability, not proof of complete production recovery.
+- Treat successful snapshot-status output as evidence of snapshot readability, not proof of complete production recovery.
 
 ## Future Improvements
 
-Possible extensions include:
+Potential extensions include:
 
 - Off-host or object-storage backup replication.
 - Encryption at rest for exported backup files.
 - Monitoring and alerting for failed backups.
 - Automated backup-age and disk-space checks.
-- A documented, fully isolated Kubernetes disaster-recovery exercise.
-- Automated testing of retention edge cases.
+- A fully isolated Kubernetes disaster-recovery exercise.
+- Automated tests for retention edge cases.
 - A recovery runbook covering control-plane restoration and post-recovery validation.
-
-## Evidence and Screenshots
-
-A separate screenshot guide is maintained at:
-
-`docs/SCREENSHOT-GUIDE.md`
-
-Recommended screenshots include:
-
-- CronJob configuration and suspended state.
-- Successful manual Job execution.
-- Snapshot creation logs.
-- Snapshot validation output.
-- Finalized backup file and permissions.
-- SHA-256 checksum.
-- Retention behavior.
-- Cluster health checks.
-- Standalone snapshot verification.
-
-Screenshots should show actual terminal or Kubernetes output. Redact credentials, tokens, private keys, and other sensitive information before publishing them.
 
 ## Project Status
 
 The following components have been tested:
 
-- Backup workflow triggered manually.
-- Snapshot creation using etcd TLS credentials.
-- Snapshot validation using `etcdutl`.
-- Timestamped snapshot finalization.
-- Restrictive file permissions.
-- Seven-backup retention logic.
-- Standalone snapshot verification.
-- Basic Kubernetes cluster health checks.
-- An isolated etcd snapshot restore test.
+- [x] Backup workflow triggered manually.
+- [x] Snapshot creation using etcd TLS credentials.
+- [x] Snapshot validation using `etcdutl`.
+- [x] Timestamped snapshot finalization.
+- [x] Restrictive file permissions.
+- [x] Seven-backup retention logic.
+- [x] Standalone snapshot verification.
+- [x] Basic Kubernetes cluster health checks.
+- [x] An isolated etcd snapshot restore test.
 
 The scheduled CronJob remains suspended. A complete production disaster-recovery exercise has not been claimed.
